@@ -15,13 +15,20 @@ These instructions apply throughout the repository. Keep [README.md](README.md) 
 
 The Makefile and CMakeLists.txt each list the C sources explicitly. Keep both lists in sync when adding or removing a source file. Both builds target C11 on Linux and macOS.
 
+## HTTPS termination and proxy compatibility
+
+Operators choose where HTTPS terminates and how to protect the connection to the Hub. Keep the Hub compatible with any deployment that delivers a standard HTTP/1.1 WebSocket upgrade on the configured path. Keep setup instructions proxy-neutral. Direct TLS on the Hub remains an operator choice.
+
+Authenticate both roles using the Hub password in the first WebSocket registration message. Treat `Forwarded`, `X-Forwarded-Proto`, cookies, and User-Agent as untrusted metadata. Their presence, absence, or values must not change registration or authorization. Negotiate a subprotocol only when both sides offer a match.
+
+When changing the handshake, exercise requests with absent and conflicting forwarding headers and with no subprotocol offer. These cases are covered by [the end-to-end tests](tests/test_e2e.sh).
+
 ## Invariants to preserve
 
 - **Listener lifetime.** The Receiver owns its listening socket across pairing and reconnect attempts. A Hub outage or replacement of a peer ends the old streams. Verify that the original port stays bound and that a fresh connection succeeds after pairing.
 - **Per-stream I/O.** The WebSocket dispatcher publishes incoming bytes to a bounded, single-producer buffer. Only the stream's worker consumes those bytes and writes them to its local socket. Keep local socket I/O and final descriptor cleanup outside the session mutex. The last reference owns cleanup.
 - **Backpressure and EOF.** Each stream allocates its 1 MiB buffer on demand. Reset that stream if the next frame cannot fit or if its worker has pending bytes and makes no write progress for 15 seconds. Deliver queued bytes before an orderly EOF and preserve the reverse direction after a half-close. A worker paused outside shared locks occupies one slot. A stalled dispatcher or a permanently held session lock affects the whole session.
 - **Capacity.** The Hub and each agent have 128 worker slots per process. Each Hub client's outbound queue is bounded by both 8 MiB and 2,048 frames. Exercise the relevant limit at the stream or connection level when changing queue handling.
-- **Deployment boundary.** Keep Hub registration independent of HTTP forwarding headers and proxy products. The Hub authenticates the first WebSocket message after a standard upgrade.
 - **Secret inputs.** Prefer environment injection in user-facing examples. File-based credentials use separate regular files owned by the runtime UID with mode `0400` or `0600`. Verify permissions on the open descriptor. Keep secret values out of command lines and diagnostics.
 - **Configuration compatibility.** Check the Hub password for both roles before registering a client or changing a pair. An omitted `allowed_tokens` allows authenticated agents to use any channel. A configured list requires at least one item. A 64-character lowercase hexadecimal value is read as a channel ID. Its derivation is the lowercase hex SHA-256 digest of the bytes of `kreamlink:channel-id:v1:` followed by the channel secret. Keep the examples and parser tests in sync with configuration changes.
 

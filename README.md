@@ -48,4 +48,4 @@ Set both agents to the same reachable `wss://` Hub URL and the same high-entropy
 
 The Hub can serve TLS directly with `--tls-cert` and `--tls-key`, or run behind a [TLS-terminating reverse proxy](examples/nginx.conf). The agents use the channel secret for end-to-end encryption. If the Hub restricts pairing with `allowed_tokens`, use derived channel IDs to keep the secret off the Hub. Protocol v1 allows an active relay to replay previously authenticated frames.
 
-For repository layout, implementation guidance, and tests, see [AGENTS.md](AGENTS.md).
+For wire formats and interoperability, see the [v1 protocol specification](docs/protocol-v1.md). For repository layout, implementation guidance, and tests, see [AGENTS.md](AGENTS.md).

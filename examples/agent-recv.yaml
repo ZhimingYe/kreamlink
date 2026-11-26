@@ -9,9 +9,6 @@ hub: "wss://your-domain.com/api/v1/stream"
 # channel_file: "/home/tenant/.config/kreamlink/channel.secret"
 listen: "127.0.0.1:10022"
 
-# Optional disguise & tuning
-# subprotocol: "kream.v1"
-# cookie: "session_id=9f8e7d6c"
 heartbeat: 15
 wait_peer_ms: 5000
 padding_max: 192

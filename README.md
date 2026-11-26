@@ -50,6 +50,6 @@ Set both agents to the same reachable `wss://` Hub URL and the same high-entropy
 
 Agents require verified WSS by default, including on shared machines. Only the explicit `--insecure` test option permits plain WS or unverified WSS on a numeric loopback address. When upgrading an existing installation, update the Hub and both agents together and configure the password on all three.
 
-The Hub can serve TLS directly with `--tls-cert` and `--tls-key`, or run behind a [TLS-terminating reverse proxy](examples/nginx.conf). The agents use the channel secret for end-to-end encryption. If the Hub restricts pairing with `allowed_tokens`, use derived channel IDs to keep the secret off the Hub. Protocol v1 allows an active relay to replay previously authenticated frames.
+Use your existing HTTPS endpoint for the public WSS URL. The Hub accepts a standard HTTP/1.1 WebSocket upgrade on its configured path and checks the registration password after the upgrade. HTTPS termination belongs to the deployment. Direct TLS is also available with `--tls-cert` and `--tls-key`. The agents use the channel secret for end-to-end encryption. If the Hub restricts pairing with `allowed_tokens`, use derived channel IDs to keep the secret off the Hub. Protocol v1 allows an active relay to replay previously authenticated frames.
 
 For wire formats and interoperability, see the [v1 protocol specification](docs/protocol-v1.md). For repository layout, implementation guidance, and tests, see [AGENTS.md](AGENTS.md).

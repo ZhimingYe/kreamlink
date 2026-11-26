@@ -64,9 +64,9 @@ typedef struct {
     char hub_password_file[1024];
     char channel_file[1024];
     char ws_path[256];          /* Default: /api/v1/stream */
-    char subprotocol[128];      /* Optional Sec-WebSocket-Protocol disguise */
+    char subprotocol[128];      /* Optional WebSocket subprotocol */
     char user_agent[256];       /* Optional User-Agent disguise */
-    char cookie[256];           /* Optional Cookie disguise */
+    char cookie[256];           /* Optional Cookie on outgoing requests */
 
     /* Hub-specific */
     char listen_addr[128];      /* e.g. "127.0.0.1:8080" (Hub or Sender) */

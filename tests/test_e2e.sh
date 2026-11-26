@@ -31,7 +31,7 @@ wait_log() {
     local pid=$1 log=$2 match=$3 i
     for ((i=0; i<150; i++)); do
         kill -0 "$pid" 2>/dev/null || return 1
-        if grep -Fq -- "$match" "$log"; then return 0; fi
+        if [[ -f "$log" ]] && grep -Fq -- "$match" "$log"; then return 0; fi
         sleep 0.1
     done
     echo "Timed out waiting for '$match' in $log" >&2
@@ -110,7 +110,7 @@ while True:
 wait_log "$!" "$TMPDIR/target.log" "target ready"
 
 echo "[2/7] Starting kreamlink Hub on 127.0.0.1:19080..."
-"$BIN" hub -l 127.0.0.1:19080 --path /api/v1/stream --subprotocol kream.v1 >"$TMPDIR/hub.log" 2>&1 &
+"$BIN" hub -l 127.0.0.1:19080 --path /api/v1/stream --subprotocol kream.v1 --cookie legacy-test >"$TMPDIR/hub.log" 2>&1 &
 HUB_PID=$!
 wait_log "$HUB_PID" "$TMPDIR/hub.log" "Hub listening"
 
@@ -125,8 +125,41 @@ assert "200 OK" in resp and "\"status\":\"ok\"" in resp, f"Unexpected probe resp
 print("  -> Anti-probe decoy OK")
 '
 
+# The same upgrade works with or without proxy metadata and protocol offers.
+python3 - <<'PYUPGRADE'
+import base64
+import os
+import socket
+
+cases = [
+    ([], None),
+    (["Forwarded: proto=https", "X-Forwarded-Proto: http", "Cookie: a=b",
+      "Sec-WebSocket-Protocol: other"], None),
+    (["Sec-WebSocket-Protocol: other", "Sec-WebSocket-Protocol: kream.v1"], "kream.v1"),
+]
+for extra, expected in cases:
+    fields = [
+        "GET /api/v1/stream HTTP/1.1", "Host: localhost", "Upgrade: websocket",
+        "Connection: keep-alive", "cOnNeCtIoN: Upgrade", "Sec-WebSocket-Version: 13",
+        "Sec-WebSocket-Key: " + base64.b64encode(os.urandom(16)).decode(), *extra,
+    ]
+    with socket.create_connection(("127.0.0.1", 19080), timeout=3) as sock:
+        sock.sendall(("\r\n".join(fields) + "\r\n\r\n").encode())
+        with sock.makefile("rb") as response:
+            assert response.readline().startswith(b"HTTP/1.1 101 ")
+            headers = []
+            for line in response:
+                if line == b"\r\n":
+                    break
+                name, value = line.decode().split(":", 1)
+                if name.lower() == "sec-websocket-protocol":
+                    headers.append(value.strip())
+            assert headers == ([expected] if expected else [])
+print("  -> Standard upgrade and optional subprotocol negotiation passed")
+PYUPGRADE
+
 echo "[4/7] Starting Receiver (permanent port holder on 127.0.0.1:19122) BEFORE Sender is online..."
-KREAMLINK_CHANNEL=super-secret-chan "$BIN" recv --insecure -u ws://127.0.0.1:19080/api/v1/stream -l 127.0.0.1:19122 --subprotocol kream.v1 --wait-peer 500 >"$TMPDIR/recv.log" 2>&1 &
+KREAMLINK_CHANNEL=super-secret-chan "$BIN" recv --insecure -u ws://127.0.0.1:19080/api/v1/stream -l 127.0.0.1:19122 --wait-peer 500 >"$TMPDIR/recv.log" 2>&1 &
 RECV_PID=$!
 wait_log "$RECV_PID" "$TMPDIR/recv.log" "Receiver holding local port"
 
@@ -271,7 +304,7 @@ finally:
 '
 
 # Restart Hub on the same address
-"$BIN" hub -l 127.0.0.1:19080 --path /api/v1/stream --subprotocol kream.v1 >"$TMPDIR/hub2.log" 2>&1 &
+"$BIN" hub -l 127.0.0.1:19080 --path /api/v1/stream --subprotocol kream.v1 --cookie legacy-test >"$TMPDIR/hub2.log" 2>&1 &
 HUB2_PID=$!
 wait_log "$HUB2_PID" "$TMPDIR/hub2.log" "Hub listening"
 wait_tunnel 19122

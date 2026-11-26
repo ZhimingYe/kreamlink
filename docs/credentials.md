@@ -7,7 +7,7 @@
 
 Use a different random value for each credential. Give each tenant its own OS account. File permissions and environment variables provide limited protection from other processes running as the same user or from the host administrator.
 
-Use verified WSS even on loopback when tenants share a network namespace. A loopback port alone does not identify its owner. For a TLS-terminating proxy, keep its plaintext backend connection inside a network namespace controlled by the operator, or use a certificate-verified upstream.
+Use verified WSS even on loopback when tenants share a network namespace. A loopback port alone does not identify its owner. When HTTPS terminates outside the Hub, the deployment is responsible for protecting the remaining hop.
 
 ## Environment variables
 

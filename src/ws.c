@@ -370,29 +370,41 @@ static int extract_header_value(const char *headers, const char *name,
     return found;
 }
 
-static bool header_has_item(const char *value, const char *item, char separator,
-                            bool ignore_case) {
-    size_t item_len = strlen(item);
-    while (*value) {
-        const char *next = strchr(value, separator);
-        const char *end = next ? next : value + strlen(value);
-        while (value < end && (*value == ' ' || *value == '\t')) value++;
-        while (end > value && (end[-1] == ' ' || end[-1] == '\t')) end--;
-        if ((size_t)(end - value) == item_len &&
-            (ignore_case ? strncasecmp(value, item, item_len) : strncmp(value, item, item_len)) == 0)
+/* HTTP list fields may be split across lines. Scan each comma-separated token. */
+static bool list_has_token(const char *value, const char *end, const char *token, bool ignore_case) {
+    size_t len = strlen(token);
+    while (value < end) {
+        const char *comma = memchr(value, ',', (size_t)(end - value));
+        const char *last = comma ? comma : end;
+        while (value < last && (*value == ' ' || *value == '\t')) value++;
+        while (last > value && (last[-1] == ' ' || last[-1] == '\t')) last--;
+        if ((size_t)(last - value) == len &&
+            (ignore_case ? strncasecmp(value, token, len) : strncmp(value, token, len)) == 0)
             return true;
-        if (!next) break;
-        value = next + 1;
+        if (!comma) break;
+        value = comma + 1;
+    }
+    return false;
+}
+
+static bool header_offers_token(const char *headers, const char *name, const char *token, bool ignore_case) {
+    size_t len = strlen(name);
+    const char *line = headers;
+    const char *end;
+    while ((end = strstr(line, "\r\n")) != NULL && end != line) {
+        if ((size_t)(end - line) > len && line[len] == ':' && !strncasecmp(line, name, len) &&
+            list_has_token(line + len + 1, end, token, ignore_case))
+            return true;
+        line = end + 2;
     }
     return false;
 }
 
 static bool has_upgrade_headers(const char *headers) {
-    char upgrade[64], connection[256];
+    char upgrade[64];
     return extract_header_value(headers, "Upgrade", upgrade, sizeof(upgrade)) == 1 &&
            strcasecmp(upgrade, "websocket") == 0 &&
-           extract_header_value(headers, "Connection", connection, sizeof(connection)) == 1 &&
-           header_has_item(connection, "upgrade", ',', true);
+           header_offers_token(headers, "Connection", "upgrade", true);
 }
 
 /* Takes ownership of fd, including on handshake failure. */
@@ -522,7 +534,7 @@ static int ws_connect_fd(kl_ws_conn_t *conn, int fd, const kl_url_t *url,
     char selected[128];
     int has_protocol = extract_header_value(resp, "Sec-WebSocket-Protocol", selected, sizeof(selected));
     if (has_protocol < 0 || (has_protocol && (!selected[0] ||
-        !header_has_item(cfg->subprotocol, selected, ',', false)))) {
+        !list_has_token(cfg->subprotocol, cfg->subprotocol + strlen(cfg->subprotocol), selected, false)))) {
         kl_ws_close(conn);
         return -1;
     }
@@ -560,8 +572,7 @@ static void send_decoy_response(kl_ws_conn_t *conn) {
         "HTTP/1.1 200 OK\r\n"
         "Content-Type: application/json; charset=utf-8\r\n"
         "Content-Length: %zu\r\n"
-        "Connection: close\r\n"
-        "Server: nginx/1.24.0\r\n\r\n%s",
+        "Connection: close\r\n\r\n%s",
         strlen(body), body);
     if (n > 0) {
         transport_write_all(conn, (const uint8_t *)resp, (size_t)n);
@@ -616,7 +627,7 @@ int kl_ws_accept_server(kl_ws_conn_t *conn, int client_fd, SSL_CTX *tls_ctx,
     char *q = strchr(path, '?');
     if (q) *q = '\0';
 
-    char ws_version[16], ws_key[128] = {0}, proto[128] = {0}, cookie[256] = {0};
+    char ws_version[16], ws_key[128] = {0};
     bool has_key = extract_header_value(line_end + 2, "Sec-WebSocket-Key", ws_key, sizeof(ws_key)) == 1;
 
     if (strcmp(path, cfg->ws_path) != 0 ||
@@ -630,24 +641,6 @@ int kl_ws_accept_server(kl_ws_conn_t *conn, int client_fd, SSL_CTX *tls_ctx,
         return -1;
     }
 
-    /* Optional Layer-1 disguise checks */
-    if (cfg->subprotocol[0]) {
-        if (extract_header_value(line_end + 2, "Sec-WebSocket-Protocol", proto, sizeof(proto)) != 1 ||
-            !header_has_item(proto, cfg->subprotocol, ',', false)) {
-            send_decoy_response(conn);
-            kl_ws_close(conn);
-            return -1;
-        }
-    }
-    if (cfg->cookie[0]) {
-        if (extract_header_value(line_end + 2, "Cookie", cookie, sizeof(cookie)) != 1 ||
-            (strcmp(cookie, cfg->cookie) && !header_has_item(cookie, cfg->cookie, ';', false))) {
-            send_decoy_response(conn);
-            kl_ws_close(conn);
-            return -1;
-        }
-    }
-
     char accept_val[64];
     if (compute_ws_accept(ws_key, accept_val, sizeof(accept_val)) != 0) {
         kl_ws_close(conn);
@@ -656,7 +649,8 @@ int kl_ws_accept_server(kl_ws_conn_t *conn, int client_fd, SSL_CTX *tls_ctx,
 
     char resp[512];
     int resp_len;
-    if (cfg->subprotocol[0]) {
+    if (cfg->subprotocol[0] &&
+        header_offers_token(line_end + 2, "Sec-WebSocket-Protocol", cfg->subprotocol, false)) {
         resp_len = snprintf(resp, sizeof(resp),
             "HTTP/1.1 101 Switching Protocols\r\n"
             "Upgrade: websocket\r\n"

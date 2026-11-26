@@ -6,6 +6,8 @@ A Receiver and a Sender each open a WebSocket connection to the Hub. Text messag
 
 Both agents are WebSocket clients. They mask outbound WebSocket frames, and the Hub sends unmasked frames. The implementation accepts fragmented data messages up to 65,536 bytes after reassembly. With WSS, TLS protects each agent's connection to its TLS endpoint. The encrypted binary records described below extend between the agents.
 
+The Hub accepts a standard HTTP/1.1 WebSocket upgrade on its configured path. External HTTPS termination is a deployment choice. Forwarding headers, cookies, and the User-Agent have no role in registration or authorization. A configured Hub subprotocol is selected only when the client offers it. If there is no match, the Hub omits the subprotocol field from its upgrade response. Older Hub configurations that specified a cookie now use the registration password as their access control.
+
 Control messages are flat JSON objects. Values can be unescaped strings, booleans, or decimal integers. The parser rejects embedded NUL bytes, nested structures, and duplicate recognized fields. Field order is immaterial.
 
 | Exchange | Fields and behavior |

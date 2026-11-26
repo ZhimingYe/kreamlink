@@ -366,7 +366,7 @@ int kl_hub_run(const kl_config_t *cfg) {
     }
 
     KL_INFO("kreamlink Hub listening on %s (ws_path=%s, tls=%s)",
-            listen_addr, cfg->ws_path, tls_ctx ? "direct" : "off/behind-nginx");
+            listen_addr, cfg->ws_path, tls_ctx ? "direct" : "off");
 
     int result = 0;
     while (!kl_stop_requested) {

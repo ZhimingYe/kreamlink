@@ -2,6 +2,12 @@
 
 These instructions apply throughout the repository. Keep [README.md](README.md) focused on what users can do, how to start the three roles, and what happens during an outage. Keep implementation and regression-test guidance here. Write both documents in English.
 
+## Project scope
+
+kreamlink carries TCP streams between a Receiver and a Sender through a Hub. It owns the correctness of that tunnel, including authentication, byte delivery, half-close, and recovery. Applications decide what the bytes mean. Operators choose how to deploy the processes, provide network access, and run the services at either end.
+
+When reviewing a feature, ask which part of the tunnel needs it. If an existing tool can handle the task through a standard interface, document that interface and leave the choice to the operator. Keep defaults predictable, make the consequences of explicit choices clear, and avoid taking control of surrounding infrastructure.
+
 ## Where to make changes
 
 | Area | Files |

@@ -2,10 +2,13 @@
 
 #include <ctype.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 void kl_config_init(kl_config_t *cfg) {
     memset(cfg, 0, sizeof(*cfg));
@@ -83,11 +86,76 @@ int kl_copy_setting(char *dest, size_t cap, const char *value) {
     return 0;
 }
 
+int kl_set_hub_password(kl_config_t *cfg, const char *password) {
+    if (!*password || !setting_fits(password, 256)) return -1;
+    return kl_base64_encode((const uint8_t *)password, strlen(password),
+                            cfg->hub_auth, sizeof(cfg->hub_auth)) < 0 ? -1 : 0;
+}
+
+/* Inspect and read the same descriptor. Nonblocking open also lets us reject FIFOs. */
+static int read_secret_file(const char *path, char secret[256]) {
+    int fd = open(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+    if (fd < 0) return -1;
+    struct stat st;
+    char raw[258]; /* Allow 255 bytes and one optional LF or CRLF. */
+    size_t used = 0;
+    int result = -1;
+    if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_uid != geteuid()) goto done;
+    mode_t mode = st.st_mode & 07777;
+    if (mode != 0400 && mode != 0600) goto done;
+
+    while (used < sizeof(raw)) {
+        ssize_t n = read(fd, raw + used, sizeof(raw) - used);
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            goto done;
+        }
+        if (!n) break;
+        used += (size_t)n;
+    }
+    if (used == sizeof(raw) || memchr(raw, 0, used)) goto done;
+    if (used && raw[used - 1] == '\n') {
+        used--;
+        if (used && raw[used - 1] == '\r') used--;
+    }
+    raw[used] = 0;
+    if (used) result = kl_copy_setting(secret, 256, raw);
+done:
+    OPENSSL_cleanse(raw, sizeof(raw));
+    close(fd);
+    return result;
+}
+
+static int load_secret(const char *env_name, const char *path, char secret[256]) {
+    const char *value = getenv(env_name);
+    if (value) {
+        if (*value && kl_copy_setting(secret, 256, value) == 0) return 0;
+        KL_ERROR("%s must contain 1 to 255 bytes without control characters", env_name);
+        return -1;
+    }
+    if (*path && read_secret_file(path, secret) == 0) return 0;
+    KL_ERROR("Set %s or supply a single-line secret in a regular file owned by this user (0400 or 0600)", env_name);
+    return -1;
+}
+
+int kl_load_credentials(kl_config_t *cfg) {
+    char password[256] = {0};
+    int rc = load_secret("KREAMLINK_HUB_PASSWORD", cfg->hub_password_file, password);
+    if (rc == 0) rc = kl_set_hub_password(cfg, password);
+    OPENSSL_cleanse(password, sizeof(password));
+    if (rc != 0 || cfg->mode == KL_MODE_HUB) return rc;
+    if (getenv("KREAMLINK_CHANNEL") || cfg->channel_file[0])
+        return load_secret("KREAMLINK_CHANNEL", cfg->channel_file, cfg->channel);
+    return 0;
+}
+
 static int set_scalar(kl_config_t *cfg, const char *key, const char *val) {
     struct { const char *key; char *dest; size_t cap; } strings[] = {
         {"listen", cfg->listen_addr, sizeof(cfg->listen_addr)},
         {"ws_path", cfg->ws_path, sizeof(cfg->ws_path)},
         {"hub", cfg->hub_url, sizeof(cfg->hub_url)},
+        {"hub_password_file", cfg->hub_password_file, sizeof(cfg->hub_password_file)},
+        {"channel_file", cfg->channel_file, sizeof(cfg->channel_file)},
         {"channel", cfg->channel, sizeof(cfg->channel)},
         {"target", cfg->target_addr, sizeof(cfg->target_addr)},
         {"user_agent", cfg->user_agent, sizeof(cfg->user_agent)},
@@ -100,6 +168,7 @@ static int set_scalar(kl_config_t *cfg, const char *key, const char *val) {
         if (strcmp(key, strings[i].key) == 0)
             return kl_copy_setting(strings[i].dest, strings[i].cap, val);
     }
+
     if (strcmp(key, "mode") == 0) {
         if (strcmp(val, "hub") == 0) cfg->mode = KL_MODE_HUB;
         else if (strcmp(val, "recv") == 0 || strcmp(val, "receiver") == 0) cfg->mode = KL_MODE_RECV;

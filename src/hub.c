@@ -213,41 +213,44 @@ static void serve_client(hub_client_t *c) {
         return;
     }
 
-    /* Layer 2: Expect fake business handshake */
-    uint8_t *buf = malloc(KL_MAX_WS_FRAME + 1);
-    if (!buf) {
-        kl_ws_close(&c->conn);
-        return;
-    }
-
+    uint8_t registration[KL_REGISTRATION_MAX_BYTES + 1];
     uint8_t op = 0;
-    int n = kl_ws_recv_msg(&c->conn, &op, buf, KL_MAX_WS_FRAME);
+    int n = kl_ws_recv_registration(&c->conn, &op, registration, sizeof(registration) - 1);
     if (n <= 0 || op != WS_OP_TEXT) {
-        free(buf);
         kl_ws_close(&c->conn);
         return;
     }
     kl_control_t msg;
-    if (!kl_control_parse((char *)buf, (size_t)n, &msg) ||
+    if (!kl_control_parse((char *)registration, (size_t)n, &msg) ||
         !msg.action || strcmp(msg.action, "subscribe") ||
         !msg.role || (strcmp(msg.role, "recv") && strcmp(msg.role, "send")) ||
         !msg.channel || strlen(msg.channel) != KL_CHAN_HASH_HEX_LEN ||
         strspn(msg.channel, "0123456789abcdef") != KL_CHAN_HASH_HEX_LEN) {
         kl_ws_send_text(&c->conn, "{\"status\":\"error\",\"code\":400}");
-        free(buf);
         kl_ws_close(&c->conn);
         return;
     }
 
     const char *chan = msg.channel;
+    size_t auth_len = strlen(c->cfg->hub_auth);
+    if (!auth_len || !msg.hub_auth || strlen(msg.hub_auth) != auth_len ||
+        CRYPTO_memcmp(msg.hub_auth, c->cfg->hub_auth, auth_len) != 0) {
+        kl_ws_send_text(&c->conn, "{\"status\":\"error\",\"code\":403}");
+        kl_ws_close(&c->conn);
+        return;
+    }
     if (!token_is_allowed(c->cfg, chan)) {
         KL_WARN("Rejected unauthorized channel %.12s..", chan);
         kl_ws_send_text(&c->conn, "{\"status\":\"error\",\"code\":403}");
-        free(buf);
         kl_ws_close(&c->conn);
         return;
     }
 
+    uint8_t *buf = malloc(KL_MAX_WS_FRAME + 1);
+    if (!buf) {
+        kl_ws_close(&c->conn);
+        return;
+    }
     c->is_sender = (strcmp(msg.role, "send") == 0);
     memcpy(c->channel_hash, chan, KL_CHAN_HASH_HEX_LEN);
     c->channel_hash[KL_CHAN_HASH_HEX_LEN] = '\0';
@@ -261,7 +264,7 @@ static void serve_client(hub_client_t *c) {
     }
     char reply[256];
     snprintf(reply, sizeof(reply),
-             "{\"status\":\"ok\",\"session\":\"%s\",\"peer_online\":%s}",
+             "{\"status\":\"ok\",\"authenticated\":true,\"session\":\"%s\",\"peer_online\":%s}",
              sess, peer_online ? "true" : "false");
     if (kl_ws_send_text(&c->conn, reply) != 0) {
         unregister_client(c);

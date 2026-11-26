@@ -32,19 +32,23 @@ printf '%s\n' '<h1>Documentation preview</h1>' > "$preview_dir/index.html"
 python3 -m http.server 8000 --bind 127.0.0.1 --directory "$preview_dir"
 ```
 
-From the repository root, run each of the following commands in a separate terminal on the same machine.
+For this single-user loopback demo, choose a disposable Hub password and set `KREAMLINK_HUB_PASSWORD` to it in all three terminals. In the two agent terminals, also set `KREAMLINK_CHANNEL` to a second shared secret. Use the [hidden-input Bash commands](docs/credentials.md#environment-variables) to keep both values out of shell history and process arguments. From the repository root, run one command per terminal.
 
 ```sh
 ./kreamlink hub -l 127.0.0.1:8080
-./kreamlink recv -u ws://127.0.0.1:8080/api/v1/stream -k local-demo -l 127.0.0.1:18080
-./kreamlink send -u ws://127.0.0.1:8080/api/v1/stream -k local-demo -t 127.0.0.1:8000
+./kreamlink recv --insecure -u ws://127.0.0.1:8080/api/v1/stream -l 127.0.0.1:18080
+./kreamlink send --insecure -u ws://127.0.0.1:8080/api/v1/stream -t 127.0.0.1:8000
 ```
 
 Open `http://127.0.0.1:18080/` in your browser. The Receiver forwards the request through the tunnel to the preview server, and the page displays **Documentation preview**.
 
 ## Run across machines
 
+Use your service manager's secret injection to set the environment variables. For file-based deployments, place each secret in a separate tenant-owned file with mode `0600` or `0400` and put its path in YAML. See [credentials on shared hosts](docs/credentials.md) for rootless setup and permissions. Either agent can register first. The Hub checks the password before creating a channel, joining it, or replacing a peer. Anyone with the Hub password can register on channels permitted by its allowlist.
+
 Set both agents to the same reachable `wss://` Hub URL and the same high-entropy channel secret. Set the Receiver's listen address on the application machine and the Sender's target address as seen from the Sender. Each role accepts a configuration file, for example `./kreamlink -c examples/agent-recv.yaml`. See the [Hub](examples/hub.yaml), [Receiver](examples/agent-recv.yaml), and [Sender](examples/agent-send.yaml) examples.
+
+Agents require verified WSS by default, including on shared machines. Only the explicit `--insecure` test option permits plain WS or unverified WSS on a numeric loopback address. When upgrading an existing installation, update the Hub and both agents together and configure the password on all three.
 
 The Hub can serve TLS directly with `--tls-cert` and `--tls-key`, or run behind a [TLS-terminating reverse proxy](examples/nginx.conf). The agents use the channel secret for end-to-end encryption. If the Hub restricts pairing with `allowed_tokens`, use derived channel IDs to keep the secret off the Hub. Protocol v1 allows an active relay to replay previously authenticated frames.
 

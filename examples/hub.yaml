@@ -1,4 +1,6 @@
 # kreamlink Hub configuration (runs behind Nginx TLS termination)
+# Prefer KREAMLINK_HUB_PASSWORD. For file-based setup, specify an owner-only file.
+# hub_password_file: "/home/tenant/.config/kreamlink/hub.password"
 mode: "hub"
 listen: "127.0.0.1:8080"
 ws_path: "/api/v1/stream"
@@ -7,7 +9,7 @@ ws_path: "/api/v1/stream"
 # subprotocol: "kream.v1"
 # cookie: "session_id=9f8e7d6c"
 
-# Optional allowlist of channel secrets (or their SHA-256 hashes).
-# Leave commented out to allow any matching channel pair.
+# Optional allowlist. Use derived channel IDs in shared configuration.
+# Leave commented out to allow authenticated agents to pair on any channel.
 # allowed_tokens:
-#   - "my-secret-channel-01"
+#   - "<64-character lowercase channel ID>"

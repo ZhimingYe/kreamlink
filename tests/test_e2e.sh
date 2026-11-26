@@ -2,6 +2,9 @@
 set -euo pipefail
 
 BIN="${KREAMLINK_BIN:-./kreamlink}"
+unset KREAMLINK_CHANNEL
+KREAMLINK_HUB_PASSWORD=$(openssl rand -hex 32)
+export KREAMLINK_HUB_PASSWORD
 TMPDIR="$(mktemp -d)"
 
 cleanup() {
@@ -18,6 +21,11 @@ cleanup() {
     rm -rf "$TMPDIR"
 }
 trap cleanup EXIT
+
+umask 077
+printf '%s\n' "$KREAMLINK_HUB_PASSWORD" > "$TMPDIR/password"
+printf '%s\n' 'super-secret-chan' > "$TMPDIR/channel"
+printf 'hub_password_file: "%s/password"\nchannel_file: "%s/channel"\n' "$TMPDIR" "$TMPDIR" > "$TMPDIR/agent.yaml"
 
 wait_log() {
     local pid=$1 log=$2 match=$3 i
@@ -118,7 +126,7 @@ print("  -> Anti-probe decoy OK")
 '
 
 echo "[4/7] Starting Receiver (permanent port holder on 127.0.0.1:19122) BEFORE Sender is online..."
-"$BIN" recv -u ws://127.0.0.1:19080/api/v1/stream -k super-secret-chan -l 127.0.0.1:19122 --subprotocol kream.v1 --wait-peer 500 >"$TMPDIR/recv.log" 2>&1 &
+KREAMLINK_CHANNEL=super-secret-chan "$BIN" recv --insecure -u ws://127.0.0.1:19080/api/v1/stream -l 127.0.0.1:19122 --subprotocol kream.v1 --wait-peer 500 >"$TMPDIR/recv.log" 2>&1 &
 RECV_PID=$!
 wait_log "$RECV_PID" "$TMPDIR/recv.log" "Receiver holding local port"
 
@@ -137,7 +145,7 @@ finally:
 '
 
 echo "[5/7] Starting Sender, testing concurrent E2EE streams + Sender disconnect/reconnect recovery..."
-"$BIN" send -u ws://127.0.0.1:19080/api/v1/stream -k super-secret-chan -t 127.0.0.1:19222 --subprotocol kream.v1 >"$TMPDIR/send.log" 2>&1 &
+env -u KREAMLINK_HUB_PASSWORD "$BIN" send -c "$TMPDIR/agent.yaml" --insecure -u ws://127.0.0.1:19080/api/v1/stream -t 127.0.0.1:19222 --subprotocol kream.v1 >"$TMPDIR/send.log" 2>&1 &
 SEND_PID=$!
 wait_log "$SEND_PID" "$TMPDIR/send.log" "Connected to Hub"
 wait_tunnel 19122
@@ -187,7 +195,7 @@ finally:
 '
 
 # Bring Sender back online
-"$BIN" send -u ws://127.0.0.1:19080/api/v1/stream -k super-secret-chan -t 127.0.0.1:19222 --subprotocol kream.v1 >"$TMPDIR/send2.log" 2>&1 &
+env -u KREAMLINK_HUB_PASSWORD "$BIN" send -c "$TMPDIR/agent.yaml" --insecure -u ws://127.0.0.1:19080/api/v1/stream -t 127.0.0.1:19222 --subprotocol kream.v1 >"$TMPDIR/send2.log" 2>&1 &
 SEND2_PID=$!
 wait_log "$SEND2_PID" "$TMPDIR/send2.log" "Connected to Hub"
 wait_tunnel 19122
@@ -300,7 +308,7 @@ s.listen(4)
 s.settimeout(12)
 print("fixture ready")
 
-def accept_ws_and_blackhole(conn):
+def reply_to_registration(conn, reply):
     conn.settimeout(5)
     req = b""
     while b"\r\n\r\n" not in req:
@@ -315,13 +323,14 @@ def accept_ws_and_blackhole(conn):
     conn.sendall(f"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {acc}\r\n\r\n".encode())
     # Read subscribe text frame (ignore payload) and send ok reply
     conn.recv(4096)
-    reply = b"{\"status\":\"ok\",\"session\":\"deadbeef\",\"peer_online\":false}"
     conn.sendall(bytes([0x81, len(reply)]) + reply)
-    # Now SILENTLY BLACKHOLE: never send pong, never close!
 
-# First connection gets blackholed; expect Agent watchdog to reconnect within ~5s!
+old, _ = s.accept()
+reply_to_registration(old, b"{\"status\":\"ok\",\"peer_online\":false}")
+old.close()
 c1, _ = s.accept()
-accept_ws_and_blackhole(c1)
+reply_to_registration(c1, b"{\"status\":\"ok\",\"authenticated\":true,\"peer_online\":false}")
+# The authenticated connection stays silent until the watchdog reconnects.
 c2, _ = s.accept()
 c2.close()
 c1.close()
@@ -331,10 +340,11 @@ print("  -> Confirmed: Agent detected silent blackhole via monotonic watchdog an
 BH_PID=$!
 wait_log "$BH_PID" "$TMPDIR/fixture.log" "fixture ready"
 
-"$BIN" recv -u ws://127.0.0.1:19099/api/v1/stream -k bh-test -l 127.0.0.1:19199 --heartbeat 1 >"$TMPDIR/bh_recv.log" 2>&1 &
+"$BIN" recv --insecure -u ws://127.0.0.1:19099/api/v1/stream -k bh-test -l 127.0.0.1:19199 --heartbeat 1 >"$TMPDIR/bh_recv.log" 2>&1 &
 BH_RECV_PID=$!
 
 wait "$BH_PID"
+grep -Fq "Hub rejected registration" "$TMPDIR/bh_recv.log"
 grep -Fq "Hub link silent" "$TMPDIR/bh_recv.log"
 kill "$BH_RECV_PID"
 wait "$BH_RECV_PID"

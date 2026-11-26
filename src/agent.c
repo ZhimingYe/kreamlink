@@ -694,11 +694,11 @@ int kl_agent_run(const kl_config_t *cfg) {
         }
 
         /* Layer 2: Fake business subscribe handshake */
-        char hs[512];
+        char hs[768];
         snprintf(hs, sizeof(hs),
                  "{\"action\":\"subscribe\",\"topic\":\"market_ticker\","
-                 "\"channel\":\"%s\",\"role\":\"%s\",\"ts\":%ld}",
-                 ag.crypto.channel_hash,
+                 "\"channel\":\"%s\",\"hub_auth\":\"%s\",\"role\":\"%s\",\"ts\":%ld}",
+                 ag.crypto.channel_hash, cfg->hub_auth,
                  cfg->mode == KL_MODE_SEND ? "send" : "recv",
                  (long)time(NULL));
         if (kl_ws_send_text(&conn, hs) != 0) {
@@ -709,7 +709,7 @@ int kl_agent_run(const kl_config_t *cfg) {
         }
 
         uint8_t op = 0;
-        int n = kl_ws_recv_msg(&conn, &op, rx_buf, KL_MAX_WS_FRAME);
+        int n = kl_ws_recv_registration(&conn, &op, rx_buf, KL_REGISTRATION_MAX_BYTES);
         if (n <= 0 || op != WS_OP_TEXT) {
             KL_WARN("Hub handshake failed");
             kl_ws_close(&conn);
@@ -719,7 +719,7 @@ int kl_agent_run(const kl_config_t *cfg) {
         }
         kl_control_t msg;
         if (!kl_control_parse((char *)rx_buf, (size_t)n, &msg) ||
-            !msg.status || strcmp(msg.status, "ok") || msg.peer_online < 0) {
+            !msg.status || strcmp(msg.status, "ok") || msg.peer_online < 0 || msg.authenticated != 1) {
             KL_ERROR("Hub rejected registration or sent an invalid response");
             kl_ws_close(&conn);
             sleep_backoff_jitter(backoff);

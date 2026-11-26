@@ -1,9 +1,12 @@
 # kreamlink Receiver configuration (permanently holds local port 10022)
 # Point other apps on this machine to 127.0.0.1:10022; the port stays occupied
 # even when the remote Sender or Hub is offline, and auto-recovers once online.
+# Prefer KREAMLINK_HUB_PASSWORD. For file-based setup, specify an owner-only file.
+# hub_password_file: "/home/tenant/.config/kreamlink/hub.password"
 mode: "recv"
 hub: "wss://your-domain.com/api/v1/stream"
-channel: "my-secret-channel-01"
+# Set KREAMLINK_CHANNEL on both agents, or use a separate owner-only file.
+# channel_file: "/home/tenant/.config/kreamlink/channel.secret"
 listen: "127.0.0.1:10022"
 
 # Optional disguise & tuning

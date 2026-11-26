@@ -63,6 +63,15 @@ static void test_frames(void) {
     assert(kl_ws_send_text(&client, "done") == 0);
     assert(kl_ws_recv_msg(&server, &op, output, 4) == 4 && !memcmp(output, "done", 4));
 
+    /* The last allowed registration frame can complete the message. */
+    for (int i = 1; i < KL_REGISTRATION_MAX_FRAMES; i++)
+        assert(!kl_ws_send_frame(&client, WS_OP_PONG, NULL, 0));
+    assert(!kl_ws_send_text(&client, "ok"));
+    assert(kl_ws_recv_registration(&server, &op, output, 2) == 2 && op == WS_OP_TEXT);
+    for (int i = 0; i < KL_REGISTRATION_MAX_FRAMES; i++)
+        assert(!kl_ws_send_frame(&client, WS_OP_PONG, NULL, 0));
+    assert(kl_ws_recv_registration(&server, &op, output, 2) < 0);
+
     const uint8_t over_capacity[] = {0x02, 1, 'x', 0x80, 2, 'y', 'z'};
     assert(write(server.fd, over_capacity, sizeof(over_capacity)) == sizeof(over_capacity));
     assert(kl_ws_recv_msg(&client, &op, output, 2) < 0);
@@ -103,10 +112,10 @@ static void expect_text(test_peer_t *peer, const char *expected) {
     assert(strstr((char *)buf, expected));
 }
 
-static void subscribe_peer(test_peer_t *peer, const char *role, const char *channel) {
+static void subscribe_peer(test_peer_t *peer, const char *role, const char *channel, const char *auth) {
     char req[256];
-    snprintf(req, sizeof(req), "{\"action\":\"subscribe\",\"role\":\"%s\",\"channel\":\"%s\"}",
-             role, channel);
+    snprintf(req, sizeof(req), "{\"action\":\"subscribe\",\"role\":\"%s\",\"channel\":\"%s\"%s%s%s}",
+             role, channel, auth ? ",\"hub_auth\":\"" : "", auth ? auth : "", auth ? "\"" : "");
     assert(kl_ws_send_text(&peer->conn, req) == 0);
 }
 
@@ -122,6 +131,7 @@ static void test_tls_hub(const char *cert, const char *key) {
     assert(kl_copy_setting(cfg.tls_key, sizeof(cfg.tls_key), key) == 0);
     assert(kl_channel_hash_hex("test channel", cfg.allowed_channel_ids[0]) == 0);
     cfg.allowed_token_count = 1;
+    assert(!kl_set_hub_password(&cfg, "TLS test password"));
     SSL_CTX *tls = create_hub_tls_ctx(&cfg);
     assert(tls);
 
@@ -133,16 +143,31 @@ static void test_tls_hub(const char *cert, const char *key) {
     assert(connect_peer(&recv_peer, &cfg, tls, "localhost") == 0);
     char hash[KL_CHAN_HASH_HEX_LEN + 1];
     assert(kl_channel_hash_hex("different channel", hash) == 0);
-    subscribe_peer(&recv_peer, "recv", hash);
+    subscribe_peer(&recv_peer, "recv", hash, cfg.hub_auth);
     expect_text(&recv_peer, "\"code\":403");
     finish_peer(&recv_peer);
 
     memcpy(hash, cfg.allowed_channel_ids[0], sizeof(hash));
+    /* Without a channel allowlist the Hub must still require a password. */
+    cfg.allowed_token_count = 0;
+    assert(connect_peer(&send_peer, &cfg, tls, "localhost") == 0);
+    subscribe_peer(&send_peer, "send", hash, NULL);
+    expect_text(&send_peer, "\"code\":403");
+    finish_peer(&send_peer);
+    assert(!g_channels);
+    assert(connect_peer(&send_peer, &cfg, tls, "localhost") == 0);
+    subscribe_peer(&send_peer, "send", hash, cfg.hub_auth);
+    expect_text(&send_peer, "\"peer_online\":false");
+    finish_peer(&send_peer);
+    assert(!g_channels);
+
+    cfg.allowed_token_count = 1;
     assert(connect_peer(&recv_peer, &cfg, tls, "127.0.0.1") == 0);
-    subscribe_peer(&recv_peer, "recv", hash);
+    assert(!kl_ws_send_frame(&recv_peer.conn, WS_OP_PING, NULL, 0));
+    subscribe_peer(&recv_peer, "recv", hash, cfg.hub_auth);
     expect_text(&recv_peer, "\"peer_online\":false");
     assert(connect_peer(&send_peer, &cfg, tls, "localhost") == 0);
-    subscribe_peer(&send_peer, "send", hash);
+    subscribe_peer(&send_peer, "send", hash, cfg.hub_auth);
     expect_text(&send_peer, "\"peer_online\":true");
     expect_text(&recv_peer, "\"online\":true");
     uint8_t op, buf[64];
@@ -150,8 +175,23 @@ static void test_tls_hub(const char *cert, const char *key) {
     assert(kl_ws_recv_msg(&recv_peer.conn, &op, buf, sizeof(buf)) == 5);
     assert(op == WS_OP_BINARY && !memcmp(buf, "hello", 5));
 
+    /* A denied registration must leave the established pair usable. */
+    char wrong_auth[KL_HUB_AUTH_CAP];
+    strcpy(wrong_auth, cfg.hub_auth);
+    wrong_auth[0] = (wrong_auth[0] == 'A') ? 'B' : 'A';
+    const char *bad_auth[] = {NULL, "", wrong_auth};
+    for (size_t i = 0; i < sizeof(bad_auth) / sizeof(bad_auth[0]); i++) {
+        assert(connect_peer(&replacement, &cfg, tls, "localhost") == 0);
+        subscribe_peer(&replacement, i % 2 ? "recv" : "send", hash, bad_auth[i]);
+        expect_text(&replacement, "\"code\":403");
+        finish_peer(&replacement);
+    }
+    assert(kl_ws_send_frame(&recv_peer.conn, WS_OP_BINARY, (const uint8_t *)"ok", 2) == 0);
+    assert(kl_ws_recv_msg(&send_peer.conn, &op, buf, sizeof(buf)) == 2);
+    assert(op == WS_OP_BINARY && !memcmp(buf, "ok", 2));
+
     assert(connect_peer(&replacement, &cfg, tls, "localhost") == 0);
-    subscribe_peer(&replacement, "send", hash);
+    subscribe_peer(&replacement, "send", hash, cfg.hub_auth);
     expect_text(&replacement, "\"peer_online\":false");
     assert(kl_ws_recv_msg(&recv_peer.conn, &op, buf, sizeof(buf)) < 0);
     assert(kl_ws_recv_msg(&send_peer.conn, &op, buf, sizeof(buf)) < 0);

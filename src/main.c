@@ -1,5 +1,6 @@
 #include "kreamlink.h"
 
+#include <arpa/inet.h>
 #include <getopt.h>
 #include <limits.h>
 #include <openssl/err.h>
@@ -22,13 +23,15 @@ static void print_usage(const char *prog) {
         "Usage:\n"
         "  %s -c <config.yaml> [overrides...]\n"
         "  %s hub  [-l 127.0.0.1:8080] [--path /api/v1/stream] [--tls-cert C --tls-key K]\n"
-        "  %s recv -u wss://host/api/v1/stream -k <channel> -l 127.0.0.1:10022\n"
-        "  %s send -u wss://host/api/v1/stream -k <channel> -t 127.0.0.1:22\n\n"
+        "  %s recv -u wss://host/api/v1/stream -l 127.0.0.1:10022\n"
+        "  %s send -u wss://host/api/v1/stream -t 127.0.0.1:22\n\n"
+        "Credentials: KREAMLINK_HUB_PASSWORD (all roles), KREAMLINK_CHANNEL (agents).\n"
+        "Config files can reference hub_password_file and channel_file.\n\n"
         "Options:\n"
         "  -c, --config <file>       Load YAML configuration file\n"
         "  -l, --listen <addr>       Listen address (Hub or Receiver permanent local port)\n"
         "  -u, --hub <url>           Hub WebSocket URL (ws:// or wss://)\n"
-        "  -k, --channel <secret>    Shared channel token (used for pairing & E2EE)\n"
+        "  -k, --channel <secret>    Legacy channel argument (visible in process listings)\n"
         "  -t, --target <addr>       Sender target address to expose (e.g. 127.0.0.1:22)\n"
         "      --path <ws_path>      Hub WebSocket path (default: /api/v1/stream)\n"
         "      --subprotocol <val>   Optional Sec-WebSocket-Protocol disguise header\n"
@@ -36,7 +39,7 @@ static void print_usage(const char *prog) {
         "      --ua <val>            Optional User-Agent header\n"
         "      --tls-cert <file>     Optional Hub direct TLS cert (PEM)\n"
         "      --tls-key <file>      Optional Hub direct TLS key (PEM)\n"
-        "      --insecure            Skip TLS certificate verification (testing only)\n"
+        "      --insecure            Allow unverified WSS or plain WS on numeric loopback (testing only)\n"
         "      --heartbeat <sec>     Heartbeat interval in seconds (default: 15)\n"
         "      --wait-peer <ms>      Receiver wait timeout when sender offline (default: 5000)\n"
         "      --padding <bytes>     Max random padding bytes 0..256 (default: 192)\n"
@@ -180,6 +183,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    if (kl_load_credentials(&cfg) != 0) return 1;
     kl_log_set_level(cfg.log_level);
 
     signal(SIGPIPE, SIG_IGN);
@@ -195,7 +199,7 @@ int main(int argc, char **argv) {
     }
 
     if (!cfg.hub_url[0] || !cfg.channel[0]) {
-        KL_ERROR("Agent requires both hub URL (-u) and channel secret (-k)");
+        KL_ERROR("Agent requires a Hub URL (-u) and a channel secret (KREAMLINK_CHANNEL or channel_file)");
         return 1;
     }
     if (cfg.mode == KL_MODE_RECV && !cfg.listen_addr[0]) {
@@ -213,6 +217,15 @@ int main(int argc, char **argv) {
     if (kl_parse_url(cfg.hub_url, &url) != 0 ||
         (cfg.mode == KL_MODE_SEND && kl_parse_hostport(cfg.target_addr, host, sizeof(host), &port) != 0)) {
         KL_ERROR("Invalid Hub URL or target address");
+        return 1;
+    }
+
+    struct in_addr v4;
+    struct in6_addr v6;
+    bool loopback = (inet_pton(AF_INET, url.host, &v4) == 1 && (ntohl(v4.s_addr) >> 24) == 127) ||
+                    (inet_pton(AF_INET6, url.host, &v6) == 1 && IN6_IS_ADDR_LOOPBACK(&v6));
+    if (!(url.use_tls && !cfg.insecure_tls) && !(loopback && cfg.insecure_tls)) {
+        KL_ERROR("Hub registration requires verified WSS (private loopback tests may use --insecure)");
         return 1;
     }
 

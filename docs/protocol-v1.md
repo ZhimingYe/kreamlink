@@ -10,11 +10,13 @@ Control messages are flat JSON objects. Values can be unescaped strings, boolean
 
 | Exchange | Fields and behavior |
 | --- | --- |
-| Agent registers | The first message is text with `action="subscribe"`, `role="recv"` or `"send"`, and `channel` set to the 64-character lowercase hexadecimal channel ID. The reference agent also sends `topic` and `ts`. The Hub only requires the first three fields. |
-| Hub accepts | The reply contains `status="ok"`, a random 32-character hexadecimal `session` string, and a boolean `peer_online`. The session string is informational. |
-| Hub rejects | An invalid registration object receives `status="error"` and numeric `code=400`. A channel rejected by the allowlist receives `code=403`. The Hub then closes the connection. |
+| Agent registers | The first message is at most 1,024 bytes of text with `action="subscribe"`, `role="recv"` or `"send"`, and `channel` set to the 64-character lowercase hexadecimal channel ID. The required string `hub_auth` is standard padded Base64 of the configured Hub password bytes. The reference agent also sends optional `topic` and `ts`. |
+| Hub accepts | The reply contains `status="ok"`, `authenticated=true`, a random 32-character hexadecimal `session` string, and a boolean `peer_online`. The session string is informational. |
+| Hub rejects | An invalid registration object receives `status="error"` and numeric `code=400`. A missing or incorrect password, or a channel rejected by the allowlist, receives `code=403`. The Hub then closes the connection. |
 | Peer arrives | The waiting agent receives `{"type":"peer","online":true}`. The arriving agent learns the peer's state from its registration reply. |
 | Heartbeat | The agent sends a text message with `type="ping"` and an integer Unix timestamp `ts`. The Hub replies with `type="pong"` and its own timestamp. WebSocket control-frame ping and pong are handled separately. |
+
+During registration each endpoint accepts at most 16 WebSocket frames per message, including intervening control frames, within a single read deadline. The password is a reusable credential shared with the Hub. Base64 is reversible, so cross-machine registration requires verified WSS. The TLS termination point must be trusted. Agents require the authentication acknowledgment and reject legacy success replies. The password check applies to both roles and precedes channel lookup and peer replacement. Either role may arrive first.
 
 A channel has one slot per role. When a paired agent disconnects, the Hub closes the surviving connection too. Registering a replacement for an occupied role retires the old pair. Connections registered afterward form a new pairing. TCP streams end with their pairing, and the Receiver keeps its local listener open across reconnects.
 

@@ -28,7 +28,7 @@ static bool set_string(const char **field, const char *value) {
 }
 
 bool kl_control_parse(char *buf, size_t len, kl_control_t *msg) {
-    *msg = (kl_control_t){.online = -1, .peer_online = -1};
+    *msg = (kl_control_t){.online = -1, .peer_online = -1, .authenticated = -1};
     if (memchr(buf, '\0', len)) return false;
     buf[len] = '\0';
     char *p = skip_space(buf);
@@ -64,6 +64,9 @@ bool kl_control_parse(char *buf, size_t len, kl_control_t *msg) {
             int *field = !strcmp(key, "online") ? &msg->online : &msg->peer_online;
             if (*field != -1 || boolean == -1) return false;
             *field = boolean;
+        } else if (!strcmp(key, "authenticated")) {
+            if (msg->authenticated != -1 || boolean == -1) return false;
+            msg->authenticated = boolean;
         } else if (!strcmp(key, "status")) {
             if (!set_string(&msg->status, str)) return false;
         } else if (!strcmp(key, "type")) {
@@ -72,6 +75,8 @@ bool kl_control_parse(char *buf, size_t len, kl_control_t *msg) {
             if (!set_string(&msg->action, str)) return false;
         } else if (!strcmp(key, "role")) {
             if (!set_string(&msg->role, str)) return false;
+        } else if (!strcmp(key, "hub_auth")) {
+            if (!set_string(&msg->hub_auth, str)) return false;
         } else if (!strcmp(key, "channel")) {
             if (!set_string(&msg->channel, str)) return false;
         }

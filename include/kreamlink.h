@@ -50,6 +50,9 @@ typedef enum {
 
 /* Maximum allowed tokens in Hub allowlist */
 #define KL_MAX_ALLOWED_TOKENS 64
+#define KL_REGISTRATION_MAX_BYTES 1024
+#define KL_REGISTRATION_MAX_FRAMES 16
+#define KL_HUB_AUTH_CAP 341 /* Base64 of up to 255 password bytes, plus NUL */
 
 /* Configuration structure */
 typedef struct {
@@ -57,6 +60,9 @@ typedef struct {
 
     /* Common */
     kl_log_level_t log_level;
+    char hub_auth[KL_HUB_AUTH_CAP];
+    char hub_password_file[1024];
+    char channel_file[1024];
     char ws_path[256];          /* Default: /api/v1/stream */
     char subprotocol[128];      /* Optional Sec-WebSocket-Protocol disguise */
     char user_agent[256];       /* Optional User-Agent disguise */
@@ -125,14 +131,16 @@ void kl_log(kl_log_level_t lvl, const char *fmt, ...);
 /* v1 control message. A missing boolean is -1. Parsing modifies buf,
  * which must have room for a terminator at buf[len]. */
 typedef struct {
-    const char *action, *role, *channel, *type, *status;
-    int online, peer_online;
+    const char *action, *role, *channel, *type, *status, *hub_auth;
+    int online, peer_online, authenticated;
 } kl_control_t;
 bool kl_control_parse(char *buf, size_t len, kl_control_t *msg);
 
 /* ---------------- Config (src/config.c) ---------------- */
 int  kl_copy_setting(char *dest, size_t cap, const char *value);
 int  kl_parse_int(const char *value, int min, int max, int *out);
+int  kl_load_credentials(kl_config_t *cfg);
+int  kl_set_hub_password(kl_config_t *cfg, const char *password);
 void kl_config_init(kl_config_t *cfg);
 int  kl_config_load_yaml(kl_config_t *cfg, const char *path);
 int  kl_parse_url(const char *url, kl_url_t *out);
@@ -183,6 +191,9 @@ int  kl_ws_send_text(kl_ws_conn_t *conn, const char *text);
  * Returns payload length (>= 0), -1 on error/EOF, -2 on CLOSE frame. */
 int  kl_ws_recv_msg(kl_ws_conn_t *conn, uint8_t *opcode_out,
                     uint8_t *buf, size_t buf_cap);
+
+/* Registration shares one read deadline and a bounded number of wire frames. */
+int  kl_ws_recv_registration(kl_ws_conn_t *conn, uint8_t *opcode_out, uint8_t *buf, size_t cap);
 
 /* Event-loop variant also returns 0 for standalone PING/PONG after handling it. */
 int  kl_ws_recv_event(kl_ws_conn_t *conn, uint8_t *opcode_out, uint8_t *buf, size_t cap);

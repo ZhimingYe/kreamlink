@@ -761,14 +761,17 @@ int kl_ws_send_text(kl_ws_conn_t *conn, const char *text) {
     return kl_ws_send_frame(conn, WS_OP_TEXT, (const uint8_t *)text, strlen(text));
 }
 
+enum ws_read_mode { WS_READ_MESSAGE, WS_READ_EVENT, WS_READ_REGISTRATION };
+
 static int recv_message(kl_ws_conn_t *conn, uint8_t *opcode_out,
-                        uint8_t *buf, size_t buf_cap, bool report_control) {
+                        uint8_t *buf, size_t buf_cap, enum ws_read_mode mode) {
     int64_t deadline = kl_now_ms() + KL_IO_TIMEOUT_MS;
     size_t total = 0;
     uint8_t msg_opcode = 0;
     bool started = false;
-
-    for (;;) {
+    /* Limit work and control replies before authentication, including frames
+     * interleaved with fragments. All frames share the same read deadline. */
+    for (unsigned frames = 0; mode != WS_READ_REGISTRATION || frames < KL_REGISTRATION_MAX_FRAMES; frames++) {
         uint8_t h[2];
         if (transport_read_exact(conn, h, 2, deadline) != 2) return -1;
 
@@ -821,7 +824,7 @@ static int recv_message(kl_ws_conn_t *conn, uint8_t *opcode_out,
             }
             if (op == WS_OP_PING && kl_ws_send_frame(conn, WS_OP_PONG, ctrl, (size_t)plen) != 0)
                 return -1;
-            if (!started && report_control) {
+            if (!started && mode == WS_READ_EVENT) {
                 *opcode_out = op;
                 return 0;
             }
@@ -852,14 +855,19 @@ static int recv_message(kl_ws_conn_t *conn, uint8_t *opcode_out,
             return (int)total;
         }
     }
+    return -1;
+}
+
+int kl_ws_recv_registration(kl_ws_conn_t *conn, uint8_t *opcode_out, uint8_t *buf, size_t cap) {
+    return recv_message(conn, opcode_out, buf, cap, WS_READ_REGISTRATION);
 }
 
 int kl_ws_recv_msg(kl_ws_conn_t *conn, uint8_t *opcode_out, uint8_t *buf, size_t cap) {
-    return recv_message(conn, opcode_out, buf, cap, false);
+    return recv_message(conn, opcode_out, buf, cap, WS_READ_MESSAGE);
 }
 
 int kl_ws_recv_event(kl_ws_conn_t *conn, uint8_t *opcode_out, uint8_t *buf, size_t cap) {
-    return recv_message(conn, opcode_out, buf, cap, true);
+    return recv_message(conn, opcode_out, buf, cap, WS_READ_EVENT);
 }
 
 int kl_ws_poll_read(kl_ws_conn_t *conn, int wakeup_fd, int timeout_ms, bool *wakeup_ready) {

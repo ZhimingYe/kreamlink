@@ -1,0 +1,13 @@
+# kreamlink Hub configuration (runs behind Nginx TLS termination)
+mode: "hub"
+listen: "127.0.0.1:8080"
+ws_path: "/api/v1/stream"
+
+# Optional Layer-1 disguise checks (must match Agent if set)
+# subprotocol: "kream.v1"
+# cookie: "session_id=9f8e7d6c"
+
+# Optional allowlist of channel secrets (or their SHA-256 hashes).
+# Leave commented out to allow any matching channel pair.
+# allowed_tokens:
+#   - "my-secret-channel-01"

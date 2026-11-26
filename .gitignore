@@ -1,0 +1,22 @@
+# Make build outputs
+/kreamlink
+/src/*.o
+/tests/test_core
+
+# CMake build trees and local metadata
+/build/
+/cmake-build-*/
+/CMakeFiles/
+/CMakeCache.txt
+/cmake_install.cmake
+/install_manifest.txt
+/compile_commands.json
+/CMakeUserPresets.json
+
+# Python test caches
+__pycache__/
+*.pyc
+
+# macOS metadata and debug symbols
+.DS_Store
+*.dSYM/

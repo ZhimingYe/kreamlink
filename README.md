@@ -1,0 +1,51 @@
+# kreamlink
+
+kreamlink gives a local application a fixed TCP address for reaching a remote service. For example, a writer can open a documentation preview at the same address in their browser while a build machine serves the latest draft. kreamlink runs on Linux and macOS.
+
+The same binary runs all three roles.
+
+| Mode | What it does |
+| --- | --- |
+| Receiver (`recv`) | Listens on the application's machine and keeps the local port bound while the Receiver is running, including during Hub or Sender outages. |
+| Hub (`hub`) | Pairs the two agents by channel and relays their encrypted traffic. Both agents connect out to the Hub. |
+| Sender (`send`) | Connects to the target service when a local application opens a connection through the Receiver. |
+
+Multiple TCP connections share the tunnel. Each supports TCP half-close, so a client can finish sending a request and still read the reply. A local application that stops reading its stream can have that stream reset while others continue. If the Hub connection goes down, the agents reconnect automatically. Applications can open new connections once the agents pair again. Existing connections end with the old session.
+
+## Build
+
+Install a C11 compiler, Make, and the OpenSSL development libraries (`libssl-dev` or `openssl-devel` on Linux, `openssl@3` with Homebrew on macOS). Build from the repository root with Make.
+
+```sh
+make
+```
+
+To build with CMake instead, run `cmake -S . -B build && cmake --build build`.
+
+## Try it locally with a documentation preview
+
+Start a preview server on port 8000 with Python 3. It serves a single page from a temporary directory.
+
+```sh
+preview_dir=$(mktemp -d)
+printf '%s\n' '<h1>Documentation preview</h1>' > "$preview_dir/index.html"
+python3 -m http.server 8000 --bind 127.0.0.1 --directory "$preview_dir"
+```
+
+From the repository root, run each of the following commands in a separate terminal on the same machine.
+
+```sh
+./kreamlink hub -l 127.0.0.1:8080
+./kreamlink recv -u ws://127.0.0.1:8080/api/v1/stream -k local-demo -l 127.0.0.1:18080
+./kreamlink send -u ws://127.0.0.1:8080/api/v1/stream -k local-demo -t 127.0.0.1:8000
+```
+
+Open `http://127.0.0.1:18080/` in your browser. The Receiver forwards the request through the tunnel to the preview server, and the page displays **Documentation preview**.
+
+## Run across machines
+
+Set both agents to the same reachable `wss://` Hub URL and the same high-entropy channel secret. Set the Receiver's listen address on the application machine and the Sender's target address as seen from the Sender. Each role accepts a configuration file, for example `./kreamlink -c examples/agent-recv.yaml`. See the [Hub](examples/hub.yaml), [Receiver](examples/agent-recv.yaml), and [Sender](examples/agent-send.yaml) examples.
+
+The Hub can serve TLS directly with `--tls-cert` and `--tls-key`, or run behind a [TLS-terminating reverse proxy](examples/nginx.conf). The agents use the channel secret for end-to-end encryption. If the Hub restricts pairing with `allowed_tokens`, use derived channel IDs to keep the secret off the Hub. Protocol v1 allows an active relay to replay previously authenticated frames.
+
+For repository layout, implementation guidance, and tests, see [AGENTS.md](AGENTS.md).
